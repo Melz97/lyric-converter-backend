@@ -6,17 +6,29 @@ from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
+from sqlalchemy.exc import OperationalError
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import io
 
 app = Flask(__name__)
 
 # --- DATABASE CONFIGURATION ---
-# The correct, final URL is now directly in the code.
 DATABASE_URL = "postgresql://neondb:npg_eLKYft0OS2GI@ep-fancy-smoke-af7x3gbf-pooler.c-2.us-west-2.aws.neon.tech/neondb?sslmode=require"
-
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
+
+# --- RETRY WRAPPER FOR DB CREATION ---
+@retry(
+    retry=retry_if_exception_type(OperationalError),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=2, max=10)
+)
+def init_db_with_retry():
+    db.create_all()
+
+with app.app_context():
+    init_db_with_retry()
 
 # --- DATABASE MODELS ---
 class User(db.Model):
@@ -29,10 +41,6 @@ class Song(db.Model):
     title = db.Column(db.String(120), nullable=False)
     lyrics = db.Column(db.Text, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-
-# This command creates the database tables every time the server starts.
-with app.app_context():
-    db.create_all()
 
 # --- API ENDPOINTS ---
 @app.route('/register', methods=['POST'])
