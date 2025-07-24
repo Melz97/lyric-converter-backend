@@ -8,29 +8,33 @@ from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
 import io
 
-# --- INITIALIZATION ---
+# --- NEW: Define the path for the secret file ---
+SECRET_PASSWORD_FILE = '/etc/secrets/db_password'
+
 app = Flask(__name__)
 
-# --- DATABASE CONFIGURATION ---
-# Safely builds the database URL from separate environment variables
-db_user = os.environ.get('DB_USER', 'neondb')
-db_password = os.environ.get('DB_PASSWORD')
-db_host = os.environ.get('DB_HOST')
-db_name = os.environ.get('DB_NAME')
+# --- DATABASE CONFIGURATION CHANGE ---
+# This part is updated to read the password from the secret file
+db_user = "neondb"
+db_host = "ep-fancy-smoke-af7x3gbf-pooler.c-2.us-west-2.aws.neon.tech"
+db_name = "neondb"
+db_password = ""
 
-# Construct the URL, only if all parts are present
-if db_user and db_password and db_host and db_name:
-    db_url = f"postgresql://{db_user}:{db_password}@{db_host}/{db_name}?sslmode=require"
-    app.config['SQLALCHEMY_DATABASE_URI'] = db_url
-else:
-    # This will cause a clean failure if variables are missing
-    print("ERROR: Database environment variables are not set.")
-    app.config['SQLALCHEMY_DATABASE_URI'] = ''
+try:
+    with open(SECRET_PASSWORD_FILE, 'r') as f:
+        db_password = f.read().strip()
+except FileNotFoundError:
+    print("ERROR: Secret password file not found. Are you running locally?")
+    # Fallback for local testing if needed, but will fail on Render if file is missing
+    db_password = os.environ.get('DB_PASSWORD', '')
 
+
+db_url = f"postgresql://{db_user}:{db_password}@{db_host}/{db_name}?sslmode=require"
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# --- DATABASE MODELS ---
+# --- DATABASE MODELS (Unchanged) ---
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -42,12 +46,16 @@ class Song(db.Model):
     lyrics = db.Column(db.Text, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
-# --- FUNCTION TO CREATE DATABASE TABLES ---
+# --- FUNCTION TO CREATE DATABASE TABLES (Unchanged) ---
 @app.cli.command("create-db")
 def create_db():
     with app.app_context():
         db.create_all()
     print("Database tables created!")
+
+# --- ALL API ENDPOINTS ARE UNCHANGED ---
+# (register, login, add_song, get_songs, manage_song, generate_ppt_custom)
+# ...
 
 # --- API ENDPOINTS ---
 @app.route('/register', methods=['POST'])
