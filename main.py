@@ -8,22 +8,29 @@ from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
 import io
 
+# --- INITIALIZATION ---
 app = Flask(__name__)
 
-# --- DATABASE CONFIGURATION CHANGE ---
-# We now get the password from a separate environment variable to avoid URL issues.
-db_user = "neondb"
-db_password = os.environ.get('DB_PASSWORD') # Get password from a new variable
-db_host = "ep-fancy-smoke-af7x3gbf-pooler.c-2.us-west-2.aws.neon.tech"
-db_name = "neondb"
-# Construct the URL safely within the code
-db_url = f"postgresql://{db_user}:{db_password}@{db_host}/{db_name}?sslmode=require"
+# --- DATABASE CONFIGURATION ---
+# Safely builds the database URL from separate environment variables
+db_user = os.environ.get('DB_USER', 'neondb')
+db_password = os.environ.get('DB_PASSWORD')
+db_host = os.environ.get('DB_HOST')
+db_name = os.environ.get('DB_NAME')
 
-app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+# Construct the URL, only if all parts are present
+if db_user and db_password and db_host and db_name:
+    db_url = f"postgresql://{db_user}:{db_password}@{db_host}/{db_name}?sslmode=require"
+    app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+else:
+    # This will cause a clean failure if variables are missing
+    print("ERROR: Database environment variables are not set.")
+    app.config['SQLALCHEMY_DATABASE_URI'] = ''
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# --- DATABASE MODELS (Unchanged) ---
+# --- DATABASE MODELS ---
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -35,21 +42,118 @@ class Song(db.Model):
     lyrics = db.Column(db.Text, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
-# --- FUNCTION TO CREATE DATABASE TABLES (Unchanged) ---
+# --- FUNCTION TO CREATE DATABASE TABLES ---
 @app.cli.command("create-db")
 def create_db():
     with app.app_context():
         db.create_all()
     print("Database tables created!")
 
-# --- ALL API ENDPOINTS (Unchanged) ---
+# --- API ENDPOINTS ---
 @app.route('/register', methods=['POST'])
 def register():
-    # ... (code is unchanged)
+    data = request.get_json()
+    if not data or 'username' not in data or 'password' not in data:
+        return jsonify({'message': 'Username and password are required!'}), 400
+    if User.query.filter_by(username=data['username']).first():
+        return jsonify({'message': 'Username already exists!'}), 409
+    hashed_password = generate_password_hash(data['password'], method='pbkdf2:sha256')
+    new_user = User(username=data['username'], password_hash=hashed_password)
+    db.session.add(new_user)
+    db.session.commit()
+    return jsonify({'message': 'New user created!'}), 201
+
 @app.route('/login', methods=['POST'])
 def login():
-    # ... (code is unchanged)
-# ... etc. all your other routes are unchanged ...
+    data = request.get_json()
+    if not data or 'username' not in data or 'password' not in data:
+        return jsonify({'message': 'Could not verify'}), 401
+    user = User.query.filter_by(username=data['username']).first()
+    if not user or not check_password_hash(user.password_hash, data['password']):
+        return jsonify({'message': 'Could not verify! Incorrect username or password.'}), 401
+    return jsonify({'message': 'Login successful!', 'user_id': user.id}), 200
+
+@app.route('/songs', methods=['POST'])
+def add_song():
+    data = request.get_json()
+    if not data or 'title' not in data or 'lyrics' not in data or 'user_id' not in data:
+        return jsonify({'message': 'Missing data!'}), 400
+    new_song = Song(title=data['title'], lyrics=data['lyrics'], user_id=data['user_id'])
+    db.session.add(new_song)
+    db.session.commit()
+    return jsonify({'message': 'Song created!', 'song_id': new_song.id}), 201
+
+@app.route('/songs/<int:user_id>', methods=['GET'])
+def get_songs(user_id):
+    songs = Song.query.filter_by(user_id=user_id).order_by(Song.title).all()
+    output = []
+    for song in songs:
+        song_data = {'id': song.id, 'title': song.title, 'lyrics': song.lyrics}
+        output.append(song_data)
+    return jsonify({'songs': output})
+
+@app.route('/songs/<int:song_id>', methods=['PUT', 'DELETE'])
+def manage_song(song_id):
+    song = Song.query.get(song_id)
+    if not song:
+        return jsonify({'message': 'Song not found!'}), 404
+    if request.method == 'PUT':
+        data = request.get_json()
+        song.title = data.get('title', song.title)
+        song.lyrics = data.get('lyrics', song.lyrics)
+        db.session.commit()
+        return jsonify({'message': 'Song updated!'})
+    if request.method == 'DELETE':
+        db.session.delete(song)
+        db.session.commit()
+        return jsonify({'message': 'Song deleted!'})
+
 @app.route('/generate-ppt', methods=['POST'])
 def generate_ppt_custom():
-    # ... (code is unchanged)
+    try:
+        data = request.get_json()
+        lyrics = data.get('lyrics', '')
+        song_title = data.get('title', 'Lyrics')
+        bg_color_hex = data.get('backgroundColor', '000000')
+        font_color_hex = data.get('fontColor', 'FFFFFF')
+        font_size = int(data.get('fontSize', 44))
+        font_name = data.get('fontName', 'Arial')
+
+        prs = Presentation()
+        prs.slide_width = Inches(16)
+        prs.slide_height = Inches(9)
+        blank_slide_layout = prs.slide_layouts[6]
+
+        paragraphs = [p.strip() for p in lyrics.split('\n\n') if p.strip()]
+        for paragraph in paragraphs:
+            slide = prs.slides.add_slide(blank_slide_layout)
+            fill = slide.background.fill
+            fill.solid()
+            fill.fore_color.rgb = RGBColor.from_string(bg_color_hex)
+            
+            txBox = slide.shapes.add_textbox(Inches(1.0), Inches(1.0), Inches(14.0), Inches(7.0))
+            tf = txBox.text_frame
+            tf.word_wrap = True
+            p = tf.paragraphs[0]
+            p.text = paragraph
+            p.alignment = PP_ALIGN.CENTER
+            
+            font = p.font
+            font.name = font_name
+            font.size = Pt(font_size)
+            font.color.rgb = RGBColor.from_string(font_color_hex)
+
+        file_stream = io.BytesIO()
+        prs.save(file_stream)
+        file_stream.seek(0)
+        
+        safe_filename = "".join([c for c in song_title if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+        return send_file(
+            file_stream,
+            as_attachment=True,
+            download_name=f"{safe_filename}.pptx",
+            mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        )
+    except Exception as e:
+        print(f"Error in /generate-ppt: {e}")
+        return jsonify({"error": str(e)}), 500
