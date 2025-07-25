@@ -1,7 +1,7 @@
 Flask==3.0.0
 Flask-SQLAlchemy==3.1.1
 gunicorn==21.2.0
-psycopg2-binary==2.9.9
+pg8000-dbapi
 Werkzeug==3.0.1
 python-pptx==0.6.23
 tenacity==8.2.3
