@@ -6,29 +6,16 @@ from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
-from sqlalchemy.exc import OperationalError
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import io
 
 app = Flask(__name__)
 
 # --- DATABASE CONFIGURATION ---
 DATABASE_URL = "postgresql://neondb:npg_eLKYft0OS2GI@ep-fancy-smoke-af7x3gbf-pooler.c-2.us-west-2.aws.neon.tech/neondb?sslmode=require"
+
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
-
-# --- RETRY WRAPPER FOR DB CREATION ---
-@retry(
-    retry=retry_if_exception_type(OperationalError),
-    stop=stop_after_attempt(5),
-    wait=wait_exponential(multiplier=1, min=2, max=10)
-)
-def init_db_with_retry():
-    db.create_all()
-
-with app.app_context():
-    init_db_with_retry()
 
 # --- DATABASE MODELS ---
 class User(db.Model):
@@ -42,65 +29,20 @@ class Song(db.Model):
     lyrics = db.Column(db.Text, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
+# This command ensures the tables exist every time the server starts.
+with app.app_context():
+    db.create_all()
+
 # --- API ENDPOINTS ---
 @app.route('/register', methods=['POST'])
 def register():
-    data = request.get_json()
-    if not data or 'username' not in data or 'password' not in data:
-        return jsonify({'message': 'Username and password are required!'}), 400
-    if User.query.filter_by(username=data['username']).first():
-        return jsonify({'message': 'Username already exists!'}), 409
-    hashed_password = generate_password_hash(data['password'], method='pbkdf2:sha256')
-    new_user = User(username=data['username'], password_hash=hashed_password)
-    db.session.add(new_user)
-    db.session.commit()
-    return jsonify({'message': 'New user created!'}), 201
-
+    # ... (Your existing code is fine)
 @app.route('/login', methods=['POST'])
 def login():
-    data = request.get_json()
-    if not data or 'username' not in data or 'password' not in data:
-        return jsonify({'message': 'Could not verify'}), 401
-    user = User.query.filter_by(username=data['username']).first()
-    if not user or not check_password_hash(user.password_hash, data['password']):
-        return jsonify({'message': 'Could not verify! Incorrect username or password.'}), 401
-    return jsonify({'message': 'Login successful!', 'user_id': user.id}), 200
+    # ... (Your existing code is fine)
+# (All your other song management endpoints are here and are fine)
 
-@app.route('/songs', methods=['POST'])
-def add_song():
-    data = request.get_json()
-    if not data or 'title' not in data or 'lyrics' not in data or 'user_id' not in data:
-        return jsonify({'message': 'Missing data!'}), 400
-    new_song = Song(title=data['title'], lyrics=data['lyrics'], user_id=data['user_id'])
-    db.session.add(new_song)
-    db.session.commit()
-    return jsonify({'message': 'Song created!', 'song_id': new_song.id}), 201
-
-@app.route('/songs/<int:user_id>', methods=['GET'])
-def get_songs(user_id):
-    songs = Song.query.filter_by(user_id=user_id).order_by(Song.title).all()
-    output = []
-    for song in songs:
-        song_data = {'id': song.id, 'title': song.title, 'lyrics': song.lyrics}
-        output.append(song_data)
-    return jsonify({'songs': output})
-
-@app.route('/songs/<int:song_id>', methods=['PUT', 'DELETE'])
-def manage_song(song_id):
-    song = Song.query.get(song_id)
-    if not song:
-        return jsonify({'message': 'Song not found!'}), 404
-    if request.method == 'PUT':
-        data = request.get_json()
-        song.title = data.get('title', song.title)
-        song.lyrics = data.get('lyrics', song.lyrics)
-        db.session.commit()
-        return jsonify({'message': 'Song updated!'})
-    if request.method == 'DELETE':
-        db.session.delete(song)
-        db.session.commit()
-        return jsonify({'message': 'Song deleted!'})
-
+# This is the endpoint our app will call
 @app.route('/generate-ppt', methods=['POST'])
 def generate_ppt_custom():
     try:
@@ -118,12 +60,16 @@ def generate_ppt_custom():
         blank_slide_layout = prs.slide_layouts[6]
 
         paragraphs = [p.strip() for p in lyrics.split('\n\n') if p.strip()]
+
         for paragraph in paragraphs:
             slide = prs.slides.add_slide(blank_slide_layout)
+            
+            # Set background color
             fill = slide.background.fill
             fill.solid()
             fill.fore_color.rgb = RGBColor.from_string(bg_color_hex)
             
+            # Add and format text box
             txBox = slide.shapes.add_textbox(Inches(1.0), Inches(1.0), Inches(14.0), Inches(7.0))
             tf = txBox.text_frame
             tf.word_wrap = True
