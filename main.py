@@ -11,8 +11,6 @@ import io
 app = Flask(__name__)
 
 # --- DATABASE CONFIGURATION ---
-# This reads the database URL from Render's environment variables.
-# It is the most secure and flexible method.
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
@@ -30,14 +28,13 @@ class Song(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
 # --- COMMAND TO CREATE DATABASE TABLES ---
-# This is run by Render during the build process.
 @app.cli.command("create-db")
 def create_db():
     with app.app_context():
         db.create_all()
     print("Database tables created!")
 
-# --- API ENDPOINTS ---
+# --- API ENDPOINTS (No changes needed here) ---
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -97,6 +94,27 @@ def manage_song(song_id):
         db.session.commit()
         return jsonify({'message': 'Song deleted!'})
 
+
+# --- HELPER FUNCTION (New) ---
+# MODIFIED: Added a robust helper function to handle hex color codes.
+def hex_to_rgb(hex_color):
+    """Converts a hex color string (e.g., "FFFFFF" or "#FFFFFF") to an RGB tuple."""
+    hex_color = hex_color.lstrip('#').strip()
+    # Handle empty strings defaulting to black
+    if not hex_color:
+        return (0, 0, 0)
+    # Handle shorthand hex (e.g., "FFF") -> "FFFFFF"
+    if len(hex_color) == 3:
+        hex_color = "".join([c*2 for c in hex_color])
+    if len(hex_color) == 6:
+        try:
+            return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        except ValueError:
+            return (0, 0, 0) # Default to black on error
+    return (0, 0, 0) # Default to black if format is wrong
+
+# --- POWERPOINT GENERATION ENDPOINT (Modified) ---
+
 @app.route('/generate-ppt', methods=['POST'])
 def generate_ppt_custom():
     try:
@@ -108,29 +126,47 @@ def generate_ppt_custom():
         font_size = int(data.get('fontSize', 44))
         font_name = data.get('fontName', 'Arial')
 
+        # MODIFIED: Check for the new slide delimiter from the Android app
+        slide_delimiter = data.get('slide_delimiter')
+
         prs = Presentation()
         prs.slide_width = Inches(16)
         prs.slide_height = Inches(9)
         blank_slide_layout = prs.slide_layouts[6]
 
-        paragraphs = [p.strip() for p in lyrics.split('\n\n') if p.strip()]
-        for paragraph in paragraphs:
+        # MODIFIED: Logic to split lyrics into slides
+        if slide_delimiter:
+            # New method: Split by the delimiter if it exists
+            slides_content = [s.strip() for s in lyrics.split(slide_delimiter) if s.strip()]
+        else:
+            # Old method (fallback): Split by paragraph (two newlines)
+            slides_content = [p.strip() for p in lyrics.split('\n\n') if p.strip()]
+
+        if not slides_content:
+             return "Cannot generate a presentation with no slides.", 400
+
+        for content in slides_content:
             slide = prs.slides.add_slide(blank_slide_layout)
+            
+            # MODIFIED: Use the helper function for robust color conversion
+            bg_rgb = hex_to_rgb(bg_color_hex)
+            font_rgb = hex_to_rgb(font_color_hex)
+            
             fill = slide.background.fill
             fill.solid()
-            fill.fore_color.rgb = RGBColor.from_string(bg_color_hex)
+            fill.fore_color.rgb = RGBColor(*bg_rgb)
             
             txBox = slide.shapes.add_textbox(Inches(1.0), Inches(1.0), Inches(14.0), Inches(7.0))
             tf = txBox.text_frame
             tf.word_wrap = True
             p = tf.paragraphs[0]
-            p.text = paragraph
+            p.text = content
             p.alignment = PP_ALIGN.CENTER
             
             font = p.font
             font.name = font_name
             font.size = Pt(font_size)
-            font.color.rgb = RGBColor.from_string(font_color_hex)
+            font.color.rgb = RGBColor(*font_rgb)
 
         file_stream = io.BytesIO()
         prs.save(file_stream)
