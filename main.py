@@ -8,27 +8,13 @@ from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
 import io
 
-# This is the path where Render will place our secret password file
-SECRET_PASSWORD_FILE = '/etc/secrets/db_password'
-
 app = Flask(__name__)
 
 # --- DATABASE CONFIGURATION ---
-# Reads the password from the secret file for security
-db_user = "neondb"
-db_host = "ep-fancy-smoke-af7x3gbf-pooler.c-2.us-west-2.aws.neon.tech"
-db_name = "neondb"
-db_password = ""
+# Final, corrected URL with the pg8000 driver and your last password
+DATABASE_URL = "postgresql+pg8000://neondb:npg_eLKYft0OS2GI@ep-fancy-smoke-af7x3gbf-pooler.c-2.us-west-2.aws.neon.tech/neondb?sslmode=require"
 
-try:
-    with open(SECRET_PASSWORD_FILE, 'r') as f:
-        db_password = f.read().strip()
-except Exception as e:
-    print(f"ERROR: Could not read secret file. {e}")
-    db_password = "FILE_NOT_FOUND" 
-
-db_url = f"postgresql://{db_user}:{db_password}@{db_host}/{db_name}?sslmode=require"
-app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
@@ -44,12 +30,9 @@ class Song(db.Model):
     lyrics = db.Column(db.Text, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
-# --- FUNCTION TO CREATE DATABASE TABLES ---
-@app.cli.command("create-db")
-def create_db():
-    with app.app_context():
-        db.create_all()
-    print("Database tables created!")
+# This command ensures the tables exist every time the server starts.
+with app.app_context():
+    db.create_all()
 
 # --- API ENDPOINTS ---
 @app.route('/register', methods=['POST'])
