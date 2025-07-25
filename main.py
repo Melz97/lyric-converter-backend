@@ -11,10 +11,8 @@ import io
 app = Flask(__name__)
 
 # --- DATABASE CONFIGURATION ---
-# Final, corrected URL with the pg8000 driver and your last password
-DATABASE_URL = "postgresql+pg8000://neondb:npg_eLKYft0OS2GI@ep-fancy-smoke-af7x3gbf-pooler.c-2.us-west-2.aws.neon.tech/neondb?sslmode=require"
-
-app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+# This is the standard, correct way. It reads the URL from Render's settings.
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
@@ -30,9 +28,29 @@ class Song(db.Model):
     lyrics = db.Column(db.Text, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
-# This command ensures the tables exist every time the server starts.
-with app.app_context():
-    db.create_all()
+# This command allows Render to create the database tables.
+@app.cli.command("create-db")
+def create_db():
+    with app.app_context():
+        db.create_all()
+    print("Database tables created!")
+
+# --- API ENDPOINTS ---
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    if not data or 'username' not in data or 'password' not in data:
+        return jsonify({'message': 'Username and password are required!'}), 400
+    if User.query.filter_by(username=data['username']).first():
+        return jsonify({'message': 'Username already exists!'}), 409
+    hashed_password = generate_password_hash(data['password'], method='pbkdf2:sha256')
+    new_user = User(username=data['username'], password_hash=hashed_password)
+    db.session.add(new_user)
+    db.session.commit()
+    return jsonify({'message': 'New user created!'}), 201
+
+# ... (Paste all your other API routes here: login, add_song, get_songs, manage_song, generate_ppt_custom) ...
+# It is very important that you paste the rest of your functions here.
 
 # --- API ENDPOINTS ---
 @app.route('/register', methods=['POST'])
