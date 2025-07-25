@@ -11,7 +11,8 @@ import io
 app = Flask(__name__)
 
 # --- DATABASE CONFIGURATION ---
-# This is the standard, correct way. It reads the URL from Render's settings.
+# This reads the database URL from Render's environment variables.
+# It is the most secure and flexible method.
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
@@ -28,7 +29,8 @@ class Song(db.Model):
     lyrics = db.Column(db.Text, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
-# This command allows Render to create the database tables.
+# --- COMMAND TO CREATE DATABASE TABLES ---
+# This is run by Render during the build process.
 @app.cli.command("create-db")
 def create_db():
     with app.app_context():
@@ -36,23 +38,7 @@ def create_db():
     print("Database tables created!")
 
 # --- API ENDPOINTS ---
-@app.route('/register', methods=['POST'])
-def register():
-    data = request.get_json()
-    if not data or 'username' not in data or 'password' not in data:
-        return jsonify({'message': 'Username and password are required!'}), 400
-    if User.query.filter_by(username=data['username']).first():
-        return jsonify({'message': 'Username already exists!'}), 409
-    hashed_password = generate_password_hash(data['password'], method='pbkdf2:sha256')
-    new_user = User(username=data['username'], password_hash=hashed_password)
-    db.session.add(new_user)
-    db.session.commit()
-    return jsonify({'message': 'New user created!'}), 201
 
-# ... (Paste all your other API routes here: login, add_song, get_songs, manage_song, generate_ppt_custom) ...
-# It is very important that you paste the rest of your functions here.
-
-# --- API ENDPOINTS ---
 @app.route('/register', methods=['POST'])
 def register():
     data = request.get_json()
