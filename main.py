@@ -7,6 +7,7 @@ from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
 import io
+import base64 # Required for handling image data
 
 app = Flask(__name__)
 
@@ -37,7 +38,6 @@ def create_db():
 # --- API ENDPOINTS (Unchanged) ---
 @app.route('/register', methods=['POST'])
 def register():
-    # ... (code is unchanged)
     data = request.get_json()
     if not data or 'username' not in data or 'password' not in data:
         return jsonify({'message': 'Username and password are required!'}), 400
@@ -51,7 +51,6 @@ def register():
 
 @app.route('/login', methods=['POST'])
 def login():
-    # ... (code is unchanged)
     data = request.get_json()
     if not data or 'username' not in data or 'password' not in data:
         return jsonify({'message': 'Could not verify'}), 401
@@ -62,7 +61,6 @@ def login():
 
 @app.route('/songs', methods=['POST'])
 def add_song():
-    # ... (code is unchanged)
     data = request.get_json()
     if not data or 'title' not in data or 'lyrics' not in data or 'user_id' not in data:
         return jsonify({'message': 'Missing data!'}), 400
@@ -73,7 +71,6 @@ def add_song():
 
 @app.route('/songs/<int:user_id>', methods=['GET'])
 def get_songs(user_id):
-    # ... (code is unchanged)
     songs = Song.query.filter_by(user_id=user_id).order_by(Song.title).all()
     output = []
     for song in songs:
@@ -83,7 +80,6 @@ def get_songs(user_id):
 
 @app.route('/songs/<int:song_id>', methods=['PUT', 'DELETE'])
 def manage_song(song_id):
-    # ... (code is unchanged)
     song = Song.query.get(song_id)
     if not song:
         return jsonify({'message': 'Song not found!'}), 404
@@ -98,69 +94,78 @@ def manage_song(song_id):
         db.session.commit()
         return jsonify({'message': 'Song deleted!'})
 
-# ✅ NEW HELPER FUNCTION TO PREVENT CRASHES
+# --- HELPER FUNCTION ---
 def hex_to_rgb(hex_color, default_color=(0, 0, 0)):
-    """Converts a hex string to an RGB tuple, with error handling."""
     hex_color = hex_color.lstrip('#').strip()
-    if not hex_color:
-        return default_color
-    if len(hex_color) == 3:
-        hex_color = "".join([c*2 for c in hex_color])
+    if not hex_color: return default_color
+    if len(hex_color) == 3: hex_color = "".join([c*2 for c in hex_color])
     if len(hex_color) == 6:
         try:
             return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
         except ValueError:
-            return default_color # Default if invalid characters are present
-    return default_color # Default if length is wrong
+            return default_color
+    return default_color
 
-# ✅ MODIFIED POWERPOINT GENERATION ENDPOINT
+# --- POWERPOINT GENERATION ENDPOINT (MODIFIED) ---
 @app.route('/generate-ppt', methods=['POST'])
 def generate_ppt_custom():
     try:
         data = request.get_json()
         lyrics = data.get('lyrics', '')
         song_title = data.get('title', 'Lyrics')
-        bg_color_hex = data.get('backgroundColor', '000000') # Default to black
-        font_color_hex = data.get('fontColor', 'FFFFFF')   # Default to white
+        bg_color_hex = data.get('backgroundColor', '000000')
+        font_color_hex = data.get('fontColor', 'FFFFFF')
         font_size = int(data.get('fontSize', 44))
-        font_name = data.get('fontName', 'Arial')
-        slide_delimiter = data.get('slide_delimiter')
+        
+        # ✅ Get the new style properties
+        font_name = data.get('fontName', 'Arial') 
+        background_image_b64 = data.get('backgroundImage')
 
         prs = Presentation()
         prs.slide_width = Inches(16)
         prs.slide_height = Inches(9)
         blank_slide_layout = prs.slide_layouts[6]
-
-        if slide_delimiter:
-            slides_content = [s.strip() for s in lyrics.split(slide_delimiter) if s.strip()]
-        else:
-            slides_content = [p.strip() for p in lyrics.split('\n\n') if p.strip()]
-
-        if not slides_content:
-            return "Cannot generate an empty presentation.", 400
         
-        # Use the safe helper function to convert colors
-        bg_rgb = hex_to_rgb(bg_color_hex, default_color=(0, 0, 0)) # Default black
-        font_rgb = hex_to_rgb(font_color_hex, default_color=(255, 255, 255)) # Default white
+        # Since we send one slide at a time, we just use the lyrics directly
+        slide_content = lyrics.strip()
 
-        for paragraph in slides_content:
-            slide = prs.slides.add_slide(blank_slide_layout)
+        if not slide_content:
+             return "Cannot generate an empty presentation.", 400
+        
+        slide = prs.slides.add_slide(blank_slide_layout)
+        
+        # ✅ New Background Logic: Prioritize Image over Color
+        if background_image_b64:
+            try:
+                image_data = base64.b64decode(background_image_b64)
+                image_stream = io.BytesIO(image_data)
+                slide.background.fill.picture(image_stream)
+            except Exception as e:
+                print(f"Error decoding or using background image: {e}")
+                # Fallback to color if image fails
+                fill = slide.background.fill
+                fill.solid()
+                fill.fore_color.rgb = RGBColor(*hex_to_rgb(bg_color_hex, (0,0,0)))
+        else:
+            # Fallback to color if no image is provided
             fill = slide.background.fill
             fill.solid()
-            fill.fore_color.rgb = RGBColor(*bg_rgb) # Use the safe RGB value
-            
-            txBox = slide.shapes.add_textbox(Inches(1.0), Inches(1.0), Inches(14.0), Inches(7.0))
-            tf = txBox.text_frame
-            tf.word_wrap = True
-            p = tf.paragraphs[0]
-            p.text = paragraph
-            p.alignment = PP_ALIGN.CENTER
-            
-            font = p.font
-            font.name = font_name
-            font.size = Pt(font_size)
-            font.color.rgb = RGBColor(*font_rgb) # Use the safe RGB value
+            fill.fore_color.rgb = RGBColor(*hex_to_rgb(bg_color_hex, (0,0,0)))
 
+        # Add text box and style it
+        txBox = slide.shapes.add_textbox(Inches(1.0), Inches(1.0), Inches(14.0), Inches(7.0))
+        tf = txBox.text_frame
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.text = slide_content
+        p.alignment = PP_ALIGN.CENTER
+        
+        font = p.font
+        font.name = font_name # ✅ Apply font family
+        font.size = Pt(font_size)
+        font.color.rgb = RGBColor(*hex_to_rgb(font_color_hex, (255,255,255)))
+
+        # Save to a memory stream and send the file
         file_stream = io.BytesIO()
         prs.save(file_stream)
         file_stream.seek(0)
